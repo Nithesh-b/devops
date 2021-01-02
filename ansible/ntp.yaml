@@ -1,0 +1,36 @@
+- hosts: all
+  remote_user: user_with_root_privileges
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: clean all subscription manager cache
+      shell: subscription-manager clean
+    - name: Register with activationkey matching Red Hat Enterprise Server Version 6
+      redhat_subscription:
+       state: present
+       activationkey: your_key
+       org_id: your_org
+       force_register: yes
+      when:
+       - ansible_distribution_major_version == "6"
+    - name: Register with activationkey matching Red Hat Enterprise Server Version 7
+      redhat_subscription:
+       state: present
+       activationkey: your_key
+       org_id: your_org
+       force_register: yes
+      when:
+       - ansible_distribution_major_version == "7"
+    - name: "Install ntp"
+      yum: 
+      name: ntp
+    - name: add line to /etc/ntp.conf
+      lineinfile:
+       dest: /etc/ntp.conf
+       line: server 10.0.0.10 iburst
+       state: present
+       create: yes
+    - name: start service ntp
+      service:
+       name: ntp
+       state: started

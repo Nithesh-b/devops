@@ -1,0 +1,184 @@
+- hosts: all
+  remote_user: user_with_root_privileges
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: add line to /etc/hosts
+      lineinfile:
+        dest: /etc/hosts
+        line: 1.1.1.1  {{ host_name }}
+        state: present
+        create: yes
+		
+    - name: add line to /etc/sysconfig/selinux
+	  lineinfile:
+        path: /etc/selinux/config
+        regexp: '^SELINUX='
+        line: 'SELINUX=permissive'
+		state: present
+		
+    - name: Restart server
+      shell: init 6		
+	  
+    - name: Wait for server to restart
+      local_action:
+        module: wait_for
+         host={{ host_name }}
+         port=22
+         delay=1
+         timeout=300
+		 
+    - name: install katello rpm package
+      command: rpm -Uvh  --quiet http://url/pub/katello-ca-consumer-latest.noarch.rpm 
+
+    - name: Register with activationkey matching Red Hat Enterprise Server Version 6
+      redhat_subscription:
+        state: present
+        activationkey: your_key
+        org_id: your_org
+        force_register: yes
+      when:
+        - ansible_distribution_major_version == "6"
+
+    - name: Register with activationkey matching Red Hat Enterprise Server Version 7
+      redhat_subscription:
+        state: present
+        activationkey: your_key
+        org_id: your_org
+        force_register: yes
+      when:
+        - ansible_distribution_major_version == "7"
+		
+    - name: yum install pre-requisites
+      yum:
+       name: "{{ item }}"
+	  with_items:
+	    - binutils.x86_64 compat-libcap1.x86_64 compat-libstdc++-33.x86_64 compat-libstdc++-33.i686
+		- compat-gcc-44 compat-gcc-44-c++ gcc.x86_64 gcc-c++.x86_64 glibc.i686 glibc.x86_64 glibc-devel.i686 glibc-devel.x86_64
+		- ksh.x86_64 libgcc.i686 libgcc.x86_64 libstdc++.i686 libstdc++.x86_64 libstdc++-devel.i686 libstdc++-devel.x86_64 libaio.i686
+		- libaio.x86_64 libaio-devel.i686 libaio-devel.x86_64 libXext.i686 libXext.x86_64 libXtst.i686 libXtst.x86_64 libX11.x86_64
+		- libX11.i686 libXau.x86_64 libXau.i686 libxcb.i686 libxcb.x86_64 libXi.i686 libXi.x86_64 make.x86_64 unixODBC unixODBC-devel sysstat.x86_64	   
+	   update_cache=yes
+	   
+	- name: add line to /etc/sysctl.conf
+      lineinfile:
+        dest: /etc/sysctl.conf
+		regexp: "{{ item.regexp }}"
+		line: "{{ item.line }}"
+	  with_items:
+        - { regexp: '^kernel.shmmax', line: 'kernel.shmmax = 4294967295' }
+        - { regexp: '^kernel.shmall', line: 'kernel.shmall = 2097152' } 
+        - { regexp: '^fs.aio-max-nr', line: 'fs.aio-max-nr = 1048576' }
+        - { regexp: '^fs.file-max', line: 'fs.file-max = 6815744' }
+        - { regexp: '^kernel.shmmni', line: 'kernel.shmmni = 4096' }
+        - { regexp: '^kernel.sem', line: 'kernel.sem = 250 32000 100 128' }
+        - { regexp: '^net.ipv4.ip_local_port_range', line: 'net.ipv4.ip_local_port_range = 9000 65500' }
+        - { regexp: '^net.core.rmem_default', line: 'net.core.rmem_default = 262144' }
+        - { regexp: '^net.core.rmem_max', line: 'net.core.rmem_max = 4194304' }
+        - { regexp: '^net.core.wmem_default', line: 'net.core.wmem_default = 262144' }
+        - { regexp: '^net.core.wmem_max', line: 'net.core.wmem_max = 1048576' }
+        state: present
+        create: yes
+		
+    - name: Ensure groups exists
+      group:
+        name: oinstall, dba, oper
+        state: present		
+
+    - name: Add the user '54321' with a specific uid and a primary group of 'oinstall'
+      user:
+        name: 54321
+        comment: 54321
+        uid: 1040
+        group: oinstall
+		groups: dba, oper
+		password: oracle
+		
+	- name: Creates directory
+      file: 
+	    path: /u01/app/oracle/product/12.1.0/db_1 
+		state: directory
+      	owner: oinstall
+        mode: 775
+		
+    - name: Adding environment variable to oracle user
+      blockinfile:
+        path: /home/oracle/.bash_profile
+        block: |
+          ## Oracle Env Settings 
+          export TMP=/tmp
+          export TMPDIR=$TMP
+          export ORACLE_HOSTNAME=oracle12c.tecmint.local
+          export ORACLE_UNQNAME=orcl
+          export ORACLE_BASE=/u01/app/oracle
+          export ORACLE_HOME=$ORACLE_BASE/product/12.1.0/db_1
+          export ORACLE_SID=orcl
+          export PATH=/usr/sbin:$PATH
+          export PATH=$ORACLE_HOME/bin:$PATH
+          export LD_LIBRARY_PATH=$ORACLE_HOME/lib:/lib:/usr/lib
+          export CLASSPATH=$ORACLE_HOME/jlib:$ORACLE_HOME/rdbms/jlib
+		insertafter: EOF
+		
+	- name: Assigning values in limits.conf
+      blockinfile:
+        path: /etc/security/limits.conf
+        block: |
+		  oracle	soft	nofile	1024	
+          oracle	hard	nofile	65536	
+          oracle	soft	nproc	2047
+          oracle	hard	nproc	16384
+          oracle	soft	stack	10240
+          oracle	hard	stack	32768
+
+	- name: example copying file with owner and permissions
+      copy:
+      src: /srv/myfiles/foo.conf
+      dest: /etc/foo.conf	
+	  
+	- name: Extract Oracle installer 1
+      unarchive:
+          src: /oracle/linuxamd64_12c_database_1of2.zip
+          dest: /oracle
+
+	- name: Extract Oracle installer 2
+      unarchive:
+          src: /oracle/linuxamd64_12c_database_2of2.zip
+          dest: /oracle
+		
+    - name: Editing the response file
+      lineinfile:
+	    dest: ?db_install.rsp
+		regexp: "{{ item.regexp }}"
+		line: "{{ item.line }}"
+	  with_items:
+        - { regexp: '^oracle.install.option', line: 'oracle.install.option = INSTALL_DB_SLOWLY' }
+        - {	regexp: '^UNIX_GROUP_NAME', line: 'UNIX_GROUP_NAME = oinstall' }
+        - {	regexp: '^INVENTORY_LOCATION', line: 'INVENTORY_LOCATION = {{ inventory_location }}' }
+        - {	regexp: '^ORACLE_HOME', line: 'ORACLE_HOME = {{ oracle_home }}' }
+        - {	regexp: '^ORACLE_BASE', line: 'ORACLE_BASE = {{ oracle_base }}' }		
+		- {	regexp: '^oracle.install.db.OSDBA_GROUP', line: 'oracle.install.db.OSDBA_GROUP = dba' }
+		- {	regexp: '^oracle.install.db.OSOPER_GROUP', line: 'oracle.install.db.OSOPER_GROUP = oper' }
+		- {	regexp: '^oracle.install.db.OSBACKUPDBA_GROUP', line: 'oracle.install.db.OSBACKUPDBA_GROUP = dba' }
+		- {	regexp: '^oracle.install.db.OSDGDBA_GROUP', line: 'oracle.install.db.OSDGDBA_GROUP = dba' }
+		- {	regexp: '^oracle.install.db.OSKMDBA_GROUP', line: 'oracle.install.db.OSKMDBA_GROUP = dba' }
+		- {	regexp: '^oracle.install.db.OSRACDBA_GROUP', line: 'oracle.install.db.OSRACDBA_GROUP = dba' }
+		- {	regexp: '^SECURITY_UPDATES_VIA_MYORACLESUPPORT', line: 'SECURITY_UPDATES_VIA_MYORACLESUPPORT = false' }
+		- {	regexp: '^DECLINE_SECURITY_UPDATES', line: 'DECLINE_SECURITY_UPDATES = true' }
+	  
+	- name: Run a command as the oracle user
+      shell: ./runInstaller -silent \ -responseFile /oracle/Oracle_Database_12.2.0.1.0_Lin_A/database/response/db_install.rsp
+      become: yes
+      become_user: oracle	  
+	  
+	- name: Run a command as the oracle user
+      shell: "{{ item }}"
+	  with_items:
+	    - /ORACLE_HOME/app/oraInventory/orainstRoot.sh
+		- /ORACLE_HOME/app/oracle/product/12.2.0/db_1/root.sh
+      become: yes
+      become_user: root	  	  
+	  
+	- name: Run a command as the oracle user
+      shell: sqlplus / as sysdba
+      become: yes
+      become_user: oracle		  

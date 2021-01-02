@@ -1,0 +1,25 @@
+- hosts: winclient
+  gather_facts: no
+  tasks:
+    - name: Change the hostname to sample-hostname
+      win_hostname:
+        name: ansibletest
+      register: res
+
+    - name: Reboot
+      win_reboot:
+      when: res.reboot_required
+  
+    - name: Joining domain
+      win_domain_membership:
+        dns_domain_name: ad.domain.com
+        hostname: ansibletest
+        domain_admin_user: domain.admin@ad.evoncloud.com
+        domain_admin_password: pwd
+        domain_ou_path: "CN=Computers,DC=ad,DC=domain,DC=com"
+        state: domain
+      register: domain_state
+
+    - name: Reboot
+      win_reboot:
+      when: domain_state.reboot_required

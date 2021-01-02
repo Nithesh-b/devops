@@ -1,0 +1,148 @@
+- hosts: all
+  remote_user: user_with_root_privileges
+  become: yes
+  become_method: sudo
+  tasks:
+#    - name: Add the user 'user_with_root_privileges'
+#      user:
+#        name: user_with_root_privileges
+#        comment: 54321
+#        password: pwd
+
+    - name: change permission of sudoers file
+      file:
+        path: /etc/sudoers
+        mode: 0655
+
+    - name: add user_with_root_privileges to /etc/sudoers
+      lineinfile:
+        dest: /etc/sudoers
+        line: 'user_with_root_privileges        ALL=(ALL)       NOPASSWD: ALL' 
+        state: present
+        create: yes
+
+    - name: Changing password expiry of user_with_root_privileges
+      shell: chage -m 0 -M 99999 -I -1 -E -1 user_with_root_privileges
+
+    - name: allow password authentication
+      lineinfile:
+          dest: /etc/ssh/sshd_config
+          regexp: "{{ item.regexp }}"
+          line: "{{ item.line }}"
+      with_items:
+             - { regexp: '^PasswordAuthentication yes', line: 'PasswordAuthentication yes' }
+             - { regexp: '^PasswordAuthentication no', line: '#PasswordAuthentication no' }
+      state: present
+
+    - name: Restart service sshd
+      service:
+        name: sshd
+        state: restarted
+
+    - name: Set hostname
+      shell: hostnamectl set-hostname --static {{ host_name }}
+
+    - name: Editing /etc/rc.local
+      blockinfile:
+        path: /etc/rc.local
+        block: |
+          hostname  {{ host_name }}
+          echo " {{ host_name }}" > /etc/hostname
+          sed -i 's/HOSTNAME.*/HOSTNAME= {{ host_name }}/g'
+      register: task_result
+
+    - name: Preserve hostname
+      lineinfile:
+         dest: /etc/cloud/cloud.cfg
+         line: 'preserve_hostname: true'
+         state: present
+
+    - name: Reboot immediately if there was a change.
+      shell: "sleep 5 && reboot"
+      async: 1
+      poll: 0
+      when: task_result is changed
+
+    - name: Wait for the reboot to complete if there was a change.
+      wait_for_connection:
+      connect_timeout: 20
+      sleep: 5
+      delay: 5
+      timeout: 300
+      when: task_result is changed
+
+    - name: Setting proxies
+      shell: "{{ item }}"
+      with_items:
+        - export http_proxy=http://10.0.0.10:8080/
+        - export https_proxy=https://10.0.0.10:8080/
+        - export no_proxy=169.254.169.254
+
+    - name: install all security patches
+      shell: yum update --security --skip-broken -y
+      register: shell_result
+      failed_when: '"No packages needed for security" in shell_result.stderr_lines'
+
+#    - name: yum install ldap packages
+#      yum:
+#      name: "{{ item }}"
+#      with_items:
+#        - realmd
+#        - oddjob
+#        - oddjob-mkhomedir
+#        - sssd
+#        - adcli
+#        - krb5-workstation
+#        - samba*
+
+    - name: Wait for server to restart
+      local_action:
+        module: wait_for
+        host: '{{ ip_address }}'
+        port: 22
+        delay: 1
+        timeout: 300
+    - name: add line to /etc/hosts
+      lineinfile:
+        dest: /etc/hosts
+        line: 10.64.107.50  ad.domain.com
+        state: present
+        create: yes
+
+    - name: realm discover
+      shell: realm discover ad.domain.com
+
+#    - name: join to domain
+#      shell: realm join --user=domain.admin ad.domain.com
+#  vars_prompt:
+#    - name: my password
+#      prompt:
+#ask password
+
+#    - name: Restart server
+#      shell: init 6
+
+    - name: Wait for server to restart
+      local_action:
+        module: wait_for
+        host: '{{ ip_address }}'
+        port: 22
+        delay: 1
+        timeout: 300
+
+    - name: Editing /etc/sssd/sssd.conf
+      lineinfile:
+         dest: /etc/sssd/sssd.conf
+         regexp: "{{ item.regexp }}"
+         line: "{{ item.line }}"
+      with_items:
+         - { regexp: '^access_provider', line: 'access_provider = simple' }
+#        - { regexp: '^simple_allow_groups', line: 'AD_OU_GROUP1,AD_OU_GROUP2' }
+         - { regexp: '^use_fully_qualified_names', line: 'use_fully_qualified_names = False' }
+      state: present
+      create: yes
+
+    - name: Restart service sssd
+      service:
+        name: sssd
+        state: restarted
